@@ -1,0 +1,173 @@
+Step 1: 
+- run command: php artisan make:auth
+
+Step 2:
+- configure the .env
+
+	MAIL_DRIVER=smtp
+	MAIL_HOST=smtp.mailtrap.io
+	MAIL_PORT=2525
+	MAIL_USERNAME=2f21c52ab91d7e
+	MAIL_PASSWORD=c59029a64d6b7d
+	MAIL_ENCRYPTION=tls
+
+
+Step 3:
+- Update the user data table into
+	Schema::create('users', function (Blueprint $table) {
+        $table->increments('id');
+        $table->string('name');
+        $table->string('email','160')->unique();
+        $table->string('password');
+        $table->string('verifyToken');
+        $table->boolean('status');
+        $table->rememberToken();
+        $table->timestamps();
+    });
+    Note: goto mysql database and change status default-define-0
+
+
+Step 4:
+- Go to the model User.php and update
+ protected $fillable = [
+        'name', 'email', 'password','verifyToken','status',
+    ];
+
+
+Step 5:
+- Go to app/Http/Controllers/Auth/RegisterController.php and update
+	protected function create(array $data)
+    {
+        return User::create([
+            'name' => $data['name'],
+            'email' => $data['email'],
+            'password' => bcrypt($data['password']),
+            'verifyToken' => Str::random(40),
+        ]);  
+    }  
+
+
+Step 6:
+- Then goto vendor/laravel/framework/src/Illuminate/Foundation/Auth/RegistersUsers.php and update
+
+	public function register(Request $request)
+    {
+        $this->validator($request->all())->validate();
+
+        event(new Registered($user = $this->create($request->all())));
+
+       // $this->guard()->login($user);
+        return redirect(route('verifyEmailFirst'));
+        return $this->registered($request, $user)
+                        ?: redirect($this->redirectPath());
+    }
+
+- Then go to the web.php and add
+	Route::get('verifyEmailFirst','Auth\RegisterController@verifyEmailFirst')->name('verifyEmailFirst');
+
+- Then go to the app/Http/Controllers/Auth/RegisterController.php and add this function
+
+	public function verifyEmailFirst() {
+        return view('email.verifyEmailFirst');
+    }
+
+- The create resources/views/email/verifyEmailFirst.blade.php with this message
+	<h1>Verify Email To Activate Account</h1>
+
+
+Step 7:
+- Go to app/Http/Controllers/Auth/RegisterController.php and update
+	protected function create(array $data)
+    {
+        $user = User::create([
+            'name' => $data['name'],
+            'email' => $data['email'],
+            'password' => bcrypt($data['password']),
+            'verifyToken' => Str::random(40),
+        ]);
+
+        $thisUser = User::findOrFail($user->id);
+        $this->sendEmail($thisUser);
+        return $user;
+    }
+
+
+    public function sendEmail($thisUser) {
+        Mail::to($thisUser['email'])->send(new verifyToken($thisUser));
+    }
+
+- Then run this command: php artisan make:mail verifyEmail
+-Go to app/Mail/verifyEmail.php and update
+ 	public $user;
+
+    public function __construct(User $user)
+    {
+        $this->user = $user;
+    }
+
+
+    public function build()
+    {
+        return $this->view('email.sendView');
+    }
+
+- Then goto  resources/views/email/sendView.blade.php and write  
+	To verify email <p href="{{route('sendEmailDone',["email" => $user->email,"verifyToken"=>$user->verifyToken])}}">click here</p>
+
+- The go to web.php
+	Route::get('verify/{email}/{verifyToken}','Auth\RegisterController@sendEmailDone')->name('sendEmailDone');
+
+- Then create a function in app/Http/Controllers/Auth/RegisterController.php and add
+	public function sendEmailDone($email, $verifyToken) {
+
+        $user = User::where(['email'=>$email, 'verifyToken'=>$verifyToken])->first();
+        if ($user) {
+             user::where(['email'=>$email, 'verifyToken'=>$verifyToken])->update(['status'=>'1', 'verifyToken'=>'NULL']);
+             return redirect(route('login'))->with('message','Your account is successfully verified!!');
+        } else {
+            return 'user not found';
+        }
+    }
+
+    Note: mysql verifyToken must be null
+
+
+Step 8:
+- Go to app/Http/Controllers/Auth/RegisterController.php
+	protected function validator(array $data)
+    {
+        Session::flash('status', 'Registered ! But verify your email to activate your account');
+        return Validator::make($data, [
+            'name' => 'required|string|max:255',
+            'email' => 'required|string|email|max:255|unique:users',
+            'password' => 'required|string|min:6|confirmed',
+        ]);
+    }
+
+- Go to vendor/laravel/framework/src/Illuminate/Foundation/Auth/RegistersUsers.php
+ public function register(Request $request)
+    {
+        $this->validator($request->all())->validate();
+
+        event(new Registered($user = $this->create($request->all())));
+
+//        $this->guard()->login($user);
+        return redirect(route('login'));
+        return $this->registered($request, $user)
+                        ?: redirect($this->redirectPath());
+    }
+
+- Go to auth/login.blade.php
+			<div class="panel panel-default">
+                <div class="panel-heading">Login</div>
+
+                @if (session()->has('status'))
+                    {{ session('status') }}
+                @endif
+
+                 @if (session()->has('message'))
+                    {{ session('message') }}
+                @endif
+
+
+
